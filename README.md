@@ -1,8 +1,9 @@
 # apic-monitoring
 
 Health-check script for IBM APIC (API Connect) Kubernetes resources. Verifies
-that a set of resources are in `Running` phase and reports whether their
-recent Kubernetes events contain any `Warning`s.
+that a set of resources are in `Running` phase, that another set report a
+`Ready` condition, and reports whether their recent Kubernetes events
+contain any `Warning`s.
 
 ## Requirements
 
@@ -23,13 +24,14 @@ recent Kubernetes events contain any `Warning`s.
 - Human-readable status lines are printed to stdout for each checked
   resource; errors go to stderr.
 
-### Config file (`apic.conf`)
+### Config file (`apic-env-template.conf`)
 
 | Variable            | Required | Description                                                                 |
 |---------------------|----------|-------------------------------------------------------------------------------|
 | `NAMESPACE`          | yes      | Kubernetes namespace to query.                                              |
 | `REQUEST_TIMEOUT`    | no       | `--request-timeout` passed to every `kubectl` call (default: `10s`).       |
 | `RUNNING_RESOURCES`  | no       | Array of `kind/name` entries whose `.status.phase` must be `Running`.      |
+| `READY_RESOURCES`    | no       | Array of `kind/name` entries whose `status.conditions[type=="Ready"]` must be `True`. |
 | `EVENTS_RESOURCES`   | no       | Array of `kind/name` entries whose Kubernetes events must contain no `Warning`. |
 
 ## Logic
@@ -43,7 +45,17 @@ For each entry, `<params-file>` is `source`d, then:
    - If the resource can't be fetched (missing/unreachable), reports
      `unavailable or does not exist` and marks the run failed.
 
-2. **Events check** (`EVENTS_RESOURCES`) — for each `kind/name`:
+2. **Ready check** (`READY_RESOURCES`) — for each `kind/name`:
+   - Fetches the `status` of the `status.conditions[]` entry with
+     `type == "Ready"` via `kubectl get <kind> <name> -o jsonpath`. This is
+     the standard Kubernetes readiness convention (used by `Pod`s,
+     cert-manager `Certificate`s, etc.), distinct from `.status.phase`.
+   - Reports `Ready` if that status is `True`; otherwise reports
+     `Not Ready` (with the status, if any) and marks the overall run failed.
+   - If the resource can't be fetched (missing/unreachable), reports
+     `unavailable or does not exist` and marks the run failed.
+
+3. **Events check** (`EVENTS_RESOURCES`) — for each `kind/name`:
    - Resolves the resource's real Kubernetes `Kind` via
      `kubectl get <kind> <name> -o jsonpath='{.kind}'` (this also serves as
      the existence check, since a short `kind` alias like `gw` may not
@@ -61,6 +73,6 @@ For each entry, `<params-file>` is `source`d, then:
    - Malformed `kind/name` entries or failed `kubectl` calls are reported
      and marked as failures.
 
-3. All results are printed as they're checked. The script exits `0` only if
-   every check across both sections passed; otherwise it exits `8`, making
+4. All results are printed as they're checked. The script exits `0` only if
+   every check across all sections passed; otherwise it exits `8`, making
    it suitable as a probe for external monitoring/alerting tooling.
