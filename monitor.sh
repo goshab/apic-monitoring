@@ -43,6 +43,8 @@ REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-10s}"
 all_checks_passed=true
 
 check_running_resources() {
+  echo "==================================================="
+  echo "Checking for RUNNING resources"
   for resource in "${RUNNING_RESOURCES[@]}"; do
     [[ -z "$resource" ]] && continue
 
@@ -79,6 +81,8 @@ check_running_resources() {
 }
 
 check_ready_resources() {
+  echo "==================================================="
+  echo "Checking for READY resources"
   for resource in "${READY_RESOURCES[@]}"; do
     [[ -z "$resource" ]] && continue
 
@@ -116,6 +120,8 @@ check_ready_resources() {
 }
 
 check_event_resources() {
+  echo "==================================================="
+  echo "Checking for events with WARNING status"
   for resource in "${EVENTS_RESOURCES[@]}"; do
     [[ -z "$resource" ]] && continue
 
