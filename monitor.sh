@@ -31,6 +31,7 @@ if [[ -z "${NAMESPACE:-}" ]]; then
 fi
 
 RUNNING_RESOURCES=("${RUNNING_RESOURCES[@]:-}")
+READY_RESOURCES=("${READY_RESOURCES[@]:-}")
 EVENTS_RESOURCES=("${EVENTS_RESOURCES[@]:-}")
 
 # How long any single kubectl call may block before giving up - read from
@@ -72,6 +73,43 @@ check_running_resources() {
       echo "$resource: Running"
     else
       echo "$resource: Not Running${phase:+, status=$phase}"
+      all_checks_passed=false
+    fi
+  done
+}
+
+check_ready_resources() {
+  for resource in "${READY_RESOURCES[@]}"; do
+    [[ -z "$resource" ]] && continue
+
+    if [[ "$resource" != */* ]]; then
+      echo "$resource: invalid format; expected kind/name"
+      all_checks_passed=false
+      continue
+    fi
+
+    kind="${resource%%/*}"
+    name="${resource#*/}"
+
+    # Standard Kubernetes convention: readiness is a status.conditions[]
+    # entry with type "Ready" (used by Pods, cert-manager Certificates,
+    # etc.), so jsonpath filters straight to its status without needing jq.
+    ready_status=$(kubectl get "$kind" "$name" \
+      -n "$NAMESPACE" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' \
+      --request-timeout="$REQUEST_TIMEOUT" \
+      2>/dev/null)
+
+    if [[ $? -ne 0 ]]; then
+      echo "$resource: unavailable or does not exist"
+      all_checks_passed=false
+      continue
+    fi
+
+    if [[ "$ready_status" == "True" ]]; then
+      echo "$resource: Ready"
+    else
+      echo "$resource: Not Ready${ready_status:+, status=$ready_status}"
       all_checks_passed=false
     fi
   done
@@ -154,6 +192,7 @@ check_event_resources() {
 }
 
 check_running_resources
+check_ready_resources
 check_event_resources
 
 if [[ "$all_checks_passed" == "true" ]]; then
