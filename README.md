@@ -2,8 +2,9 @@
 
 Health-check script for IBM APIC (API Connect) Kubernetes resources. Verifies
 that a set of resources are in `Running` phase, that another set report a
-`Ready` condition, and reports whether their recent Kubernetes events
-contain any `Warning`s.
+`Ready` condition, reports whether their recent Kubernetes events contain
+any `Warning`s, and checks every cert-manager `Certificate` in the
+namespace for upcoming or past expiration.
 
 ## Requirements
 
@@ -20,7 +21,10 @@ contain any `Warning`s.
 - `<params-file>` is a shell-sourced config file (see [apic-env-template.conf](apic-env-template.conf))
   defining the namespace and which resources to check.
 - Exit code `0` — all checks passed.
-- Exit code `8` — a usage/dependency error, or at least one check failed.
+- Exit code `4` — WARNING: no failures, but at least one certificate expires
+  within `CERT_EXPIRATION_INTERVAL` days.
+- Exit code `8` — ERROR: a usage/dependency error, or at least one check
+  failed (including an already-expired or unparseable certificate).
 - Human-readable status lines are printed to stdout for each checked
   resource; errors go to stderr.
 
@@ -33,6 +37,7 @@ contain any `Warning`s.
 | `RUNNING_RESOURCES`  | no       | Array of `kind/name` entries whose `.status.phase` must be `Running`.      |
 | `READY_RESOURCES`    | no       | Array of `kind/name` entries whose `status.conditions[type=="Ready"]` must be `True`. |
 | `EVENTS_RESOURCES`   | no       | Array of `kind/name` entries whose Kubernetes events must contain no `Warning`. |
+| `CERT_EXPIRATION_INTERVAL` | no      | Days before expiration at which a certificate triggers a `WARNING` (default: `30`; an `INFO` line is printed when it falls back to the default). |
 
 ## Logic
 
@@ -73,6 +78,22 @@ For each entry, `<params-file>` is `source`d, then:
    - Malformed `kind/name` entries or failed `kubectl` calls are reported
      and marked as failures.
 
-4. All results are printed as they're checked. The script exits `0` only if
-   every check across all sections passed; otherwise it exits `8`, making
-   it suitable as a probe for external monitoring/alerting tooling.
+4. **Certificate expiration check** — unlike the checks above, this one
+   isn't driven by a configured list; it fetches every cert-manager
+   `Certificate` in `NAMESPACE` via `kubectl get certificates -o json` and,
+   for each, reads `status.notAfter`:
+   - **Expired** (`notAfter` in the past) — reports `ERROR, expired on
+     <date>` and marks the overall run failed.
+   - **Expiring soon** (`notAfter` within `CERT_EXPIRATION_INTERVAL` days)
+     — reports `WARNING, expires in <N>d` but does *not* mark the run
+     failed.
+   - Otherwise reports `OK, expires on <date>`.
+   - A certificate with no `status.notAfter` (not yet issued) or an
+     unparseable date is reported and marks the run failed.
+   - No certificates found in the namespace is not treated as a failure.
+
+5. All results are printed as they're checked. The script's exit code
+   reflects the worst outcome across all sections: `8` if any check failed
+   (including an expired/unparseable certificate), else `4` if any
+   certificate is merely expiring soon, else `0`. This makes it suitable as
+   a probe for external monitoring/alerting tooling.
